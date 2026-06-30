@@ -79,7 +79,7 @@ final class PreviewClient {
             if (!running.get()) {
                 return;
             }
-            listener.onStatus("Connected " + handshake.width() + "x" + handshake.height() + " @" + handshake.fps() + "fps", true);
+            listener.onStatus("Connected " + handshake.source() + " " + handshake.width() + "x" + handshake.height() + " @" + handshake.fps() + "fps", true);
             decode(input, handshake);
         } finally {
             activeSocket = null;

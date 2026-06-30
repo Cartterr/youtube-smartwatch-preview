@@ -1,16 +1,21 @@
 package cl.dily.youtubepreview.phone;
 
+import android.content.Context;
+import android.content.res.AssetFileDescriptor;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.media.MediaCodec;
 import android.media.MediaCodecInfo;
 import android.media.MediaFormat;
+import android.media.MediaPlayer;
+import android.net.Uri;
 import android.util.Log;
 import android.view.Surface;
 import cl.dily.youtubepreview.shared.AccessUnitFrame;
 import cl.dily.youtubepreview.shared.StreamHandshake;
 import cl.dily.youtubepreview.shared.StreamSettings;
+import cl.dily.youtubepreview.shared.StreamSource;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.ServerSocket;
@@ -26,9 +31,18 @@ final class H264StreamingServer {
     private static final int HEIGHT = 360;
     private static final StreamSettings SETTINGS = StreamSettings.fromRequested(500_000, 12);
 
+    private final Context context;
+    private final String source;
+    private final Uri videoUri;
     private final AtomicBoolean running = new AtomicBoolean(false);
     private Thread thread;
     private ServerSocket serverSocket;
+
+    H264StreamingServer(Context context, String source, Uri videoUri) {
+        this.context = context.getApplicationContext();
+        this.source = StreamSource.normalize(source);
+        this.videoUri = videoUri;
+    }
 
     void start() {
         if (!running.compareAndSet(false, true)) {
@@ -70,12 +84,14 @@ final class H264StreamingServer {
 
     private void streamTo(Socket client) throws IOException {
         OutputStream output = client.getOutputStream();
-        output.write((StreamHandshake.v0(WIDTH, HEIGHT, SETTINGS.fps()).toJsonLine() + "\n")
+        String activeSource = activeSource();
+        output.write((StreamHandshake.v1(WIDTH, HEIGHT, SETTINGS.fps(), activeSource).toJsonLine() + "\n")
                 .getBytes(StandardCharsets.UTF_8));
         output.flush();
 
         MediaCodec encoder = MediaCodec.createEncoderByType(StreamHandshake.CODEC);
         Surface inputSurface = null;
+        boolean encoderStarted = false;
         try {
             MediaFormat format = MediaFormat.createVideoFormat(StreamHandshake.CODEC, WIDTH, HEIGHT);
             format.setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface);
@@ -85,26 +101,75 @@ final class H264StreamingServer {
             encoder.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
             inputSurface = encoder.createInputSurface();
             encoder.start();
+            encoderStarted = true;
 
-            long frameIntervalNs = 1_000_000_000L / SETTINGS.fps();
-            long nextFrameNs = System.nanoTime();
-            int frame = 0;
             MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
-            while (running.get() && !client.isClosed()) {
-                drawFrame(inputSurface, frame++);
-                drainEncoder(encoder, info, output);
-                long sleepNs = nextFrameNs - System.nanoTime();
-                if (sleepNs > 0) {
-                    sleepQuietly(sleepNs / 1_000_000L);
-                }
-                nextFrameNs += frameIntervalNs;
+            if (StreamSource.SAMPLE_MP4.equals(activeSource) || StreamSource.FILE_URI.equals(activeSource)) {
+                streamMedia(inputSurface, encoder, info, output, client, activeSource);
+            } else {
+                streamSynthetic(inputSurface, encoder, info, output, client);
             }
         } finally {
             if (inputSurface != null) {
                 inputSurface.release();
             }
-            encoder.stop();
+            if (encoderStarted) {
+                encoder.stop();
+            }
             encoder.release();
+        }
+    }
+
+    private void streamSynthetic(Surface inputSurface, MediaCodec encoder, MediaCodec.BufferInfo info, OutputStream output, Socket client)
+            throws IOException {
+        long frameIntervalNs = 1_000_000_000L / SETTINGS.fps();
+        long nextFrameNs = System.nanoTime();
+        int frame = 0;
+        while (running.get() && !client.isClosed()) {
+            drawFrame(inputSurface, frame++);
+            drainEncoder(encoder, info, output);
+            long sleepNs = nextFrameNs - System.nanoTime();
+            if (sleepNs > 0) {
+                sleepQuietly(sleepNs / 1_000_000L);
+            }
+            nextFrameNs += frameIntervalNs;
+        }
+    }
+
+    private void streamMedia(
+            Surface inputSurface,
+            MediaCodec encoder,
+            MediaCodec.BufferInfo info,
+            OutputStream output,
+            Socket client,
+            String activeSource) throws IOException {
+        MediaPlayer player = new MediaPlayer();
+        try {
+            player.setSurface(inputSurface);
+            player.setVolume(0f, 0f);
+            player.setLooping(true);
+            if (StreamSource.FILE_URI.equals(activeSource)) {
+                player.setDataSource(context, videoUri);
+            } else {
+                try (AssetFileDescriptor descriptor = context.getResources().openRawResourceFd(R.raw.v1_sample)) {
+                    player.setDataSource(
+                            descriptor.getFileDescriptor(),
+                            descriptor.getStartOffset(),
+                            descriptor.getLength());
+                }
+            }
+            player.prepare();
+            player.start();
+            while (running.get() && !client.isClosed()) {
+                drainEncoder(encoder, info, output);
+                sleepQuietly(5L);
+            }
+        } finally {
+            try {
+                player.stop();
+            } catch (IllegalStateException ignored) {
+            }
+            player.release();
         }
     }
 
@@ -171,6 +236,14 @@ final class H264StreamingServer {
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
         }
+    }
+
+    private String activeSource() {
+        if (StreamSource.FILE_URI.equals(source) && videoUri == null) {
+            Log.w(TAG, "File URI source requested without a URI; falling back to synthetic");
+            return StreamSource.SYNTHETIC;
+        }
+        return source;
     }
 }
 

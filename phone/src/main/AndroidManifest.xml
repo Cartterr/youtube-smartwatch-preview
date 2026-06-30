@@ -19,7 +19,7 @@
 
         <service
             android:name=".StreamingService"
-            android:exported="false"
+            android:exported="true"
             android:foregroundServiceType="dataSync" />
     </application>
 </manifest>

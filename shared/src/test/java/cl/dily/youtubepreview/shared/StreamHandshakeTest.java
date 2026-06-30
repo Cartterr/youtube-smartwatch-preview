@@ -11,9 +11,25 @@ class StreamHandshakeTest {
         StreamHandshake handshake = StreamHandshake.v0(360, 360, 12);
 
         assertEquals(
-                "{\"protocol\":\"yswp-h264\",\"version\":1,\"codec\":\"video/avc\",\"width\":360,\"height\":360,\"fps\":12}",
+                "{\"protocol\":\"yswp-h264\",\"version\":1,\"codec\":\"video/avc\",\"width\":360,\"height\":360,\"fps\":12,\"source\":\"synthetic\"}",
                 handshake.toJsonLine());
         assertEquals(handshake, StreamHandshake.parse(handshake.toJsonLine()));
+    }
+
+    @Test
+    void encodesAndParsesRealVideoSource() {
+        StreamHandshake handshake = StreamHandshake.v1(360, 360, 12, StreamSource.SAMPLE_MP4);
+
+        assertEquals(StreamSource.SAMPLE_MP4, handshake.source());
+        assertEquals(handshake, StreamHandshake.parse(handshake.toJsonLine()));
+    }
+
+    @Test
+    void treatsMissingSourceAsSyntheticForOldClients() {
+        StreamHandshake handshake = StreamHandshake.parse(
+                "{\"protocol\":\"yswp-h264\",\"version\":1,\"codec\":\"video/avc\",\"width\":360,\"height\":360,\"fps\":12}");
+
+        assertEquals(StreamSource.SYNTHETIC, handshake.source());
     }
 
     @Test

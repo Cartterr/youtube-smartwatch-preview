@@ -15,18 +15,28 @@ public final class StreamHandshake {
     private final int width;
     private final int height;
     private final int fps;
+    private final String source;
 
     public StreamHandshake(String protocol, int version, String codec, int width, int height, int fps) {
+        this(protocol, version, codec, width, height, fps, StreamSource.SYNTHETIC);
+    }
+
+    public StreamHandshake(String protocol, int version, String codec, int width, int height, int fps, String source) {
         this.protocol = protocol;
         this.version = version;
         this.codec = codec;
         this.width = width;
         this.height = height;
         this.fps = fps;
+        this.source = StreamSource.normalize(source);
     }
 
     public static StreamHandshake v0(int width, int height, int fps) {
         return new StreamHandshake(PROTOCOL, VERSION, CODEC, width, height, fps);
+    }
+
+    public static StreamHandshake v1(int width, int height, int fps, String source) {
+        return new StreamHandshake(PROTOCOL, VERSION, CODEC, width, height, fps, source);
     }
 
     public static StreamHandshake parse(String jsonLine) {
@@ -40,13 +50,14 @@ public final class StreamHandshake {
         int width = parseInt(required(values, "width"), "width");
         int height = parseInt(required(values, "height"), "height");
         int fps = parseInt(required(values, "fps"), "fps");
-        return new StreamHandshake(protocol, version, codec, width, height, fps);
+        return new StreamHandshake(protocol, version, codec, width, height, fps, values.get("source"));
     }
 
     public String toJsonLine() {
         return "{\"protocol\":\"" + protocol + "\",\"version\":" + version
                 + ",\"codec\":\"" + codec + "\",\"width\":" + width
-                + ",\"height\":" + height + ",\"fps\":" + fps + "}";
+                + ",\"height\":" + height + ",\"fps\":" + fps
+                + ",\"source\":\"" + source + "\"}";
     }
 
     public String protocol() {
@@ -73,6 +84,10 @@ public final class StreamHandshake {
         return fps;
     }
 
+    public String source() {
+        return source;
+    }
+
     @Override
     public boolean equals(Object other) {
         if (this == other) {
@@ -87,12 +102,13 @@ public final class StreamHandshake {
                 && height == that.height
                 && fps == that.fps
                 && Objects.equals(protocol, that.protocol)
-                && Objects.equals(codec, that.codec);
+                && Objects.equals(codec, that.codec)
+                && Objects.equals(source, that.source);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(protocol, version, codec, width, height, fps);
+        return Objects.hash(protocol, version, codec, width, height, fps, source);
     }
 
     private static String required(Map<String, String> values, String key) {
