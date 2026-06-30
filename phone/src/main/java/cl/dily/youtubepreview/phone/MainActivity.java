@@ -8,22 +8,50 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
+import android.text.InputType;
+import android.util.Log;
 import android.view.Gravity;
 import android.view.ViewGroup;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import cl.dily.youtubepreview.shared.StreamSource;
+import cl.dily.youtubepreview.shared.WatchOpenMessage;
+import cl.dily.youtubepreview.shared.YouTubeHandoff;
+import com.google.android.gms.wearable.Node;
+import com.google.android.gms.wearable.Wearable;
+
+import java.util.List;
 
 public final class MainActivity extends Activity {
+    public static final String ACTION_OPEN_ON_WATCH = "cl.dily.youtubepreview.OPEN_ON_WATCH";
+    public static final String EXTRA_YOUTUBE_INPUT = "cl.dily.youtubepreview.YOUTUBE_INPUT";
+    public static final String EXTRA_START_SECONDS = "cl.dily.youtubepreview.START_SECONDS";
+
     private static final int NOTIFICATION_PERMISSION_REQUEST = 10;
     private static final int VIDEO_PICK_REQUEST = 11;
+    private static final String TAG = "YSWPhone";
+
+    private EditText youtubeInput;
+    private EditText secondsInput;
+    private TextView status;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        requestNotificationPermission();
+        if (!ACTION_OPEN_ON_WATCH.equals(getIntent().getAction())) {
+            requestNotificationPermission();
+        }
         setContentView(createContent());
+        handleIncomingIntent(getIntent());
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handleIncomingIntent(intent);
     }
 
     private LinearLayout createContent() {
@@ -34,7 +62,7 @@ public final class MainActivity extends Activity {
         root.setPadding(padding, padding, padding, padding);
 
         TextView title = new TextView(this);
-        title.setText("YouTube Smartwatch Preview V1");
+        title.setText("YouTube Smartwatch Preview V2");
         title.setTextSize(22f);
         title.setGravity(Gravity.CENTER);
         root.addView(title, new LinearLayout.LayoutParams(
@@ -42,7 +70,7 @@ public final class MainActivity extends Activity {
                 ViewGroup.LayoutParams.WRAP_CONTENT));
 
         TextView body = new TextView(this);
-        body.setText("Streams synthetic frames, a bundled MP4, or a picked local video over the same H.264 watch transport.");
+        body.setText("Share or paste a YouTube URL, send it to the watch, and keep the phone as the audio/timestamp source.");
         body.setTextSize(15f);
         body.setGravity(Gravity.CENTER);
         LinearLayout.LayoutParams bodyParams = new LinearLayout.LayoutParams(
@@ -50,6 +78,52 @@ public final class MainActivity extends Activity {
                 ViewGroup.LayoutParams.WRAP_CONTENT);
         bodyParams.setMargins(0, dp(16), 0, dp(24));
         root.addView(body, bodyParams);
+
+        youtubeInput = new EditText(this);
+        youtubeInput.setHint("YouTube URL or video id");
+        youtubeInput.setSingleLine(false);
+        youtubeInput.setMinLines(2);
+        youtubeInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
+        root.addView(youtubeInput, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        secondsInput = new EditText(this);
+        secondsInput.setHint("Optional start seconds");
+        secondsInput.setInputType(InputType.TYPE_CLASS_NUMBER);
+        LinearLayout.LayoutParams secondsParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        secondsParams.setMargins(0, dp(12), 0, 0);
+        root.addView(secondsInput, secondsParams);
+
+        Button usePlayback = new Button(this);
+        usePlayback.setText("Use phone playback time");
+        usePlayback.setOnClickListener(view -> fillPlaybackTime());
+        LinearLayout.LayoutParams playbackParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        playbackParams.setMargins(0, dp(12), 0, 0);
+        root.addView(usePlayback, playbackParams);
+
+        Button openOnWatch = new Button(this);
+        openOnWatch.setText("Open on watch");
+        openOnWatch.setOnClickListener(view -> openYouTubeOnWatch());
+        LinearLayout.LayoutParams openParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        openParams.setMargins(0, dp(12), 0, 0);
+        root.addView(openOnWatch, openParams);
+
+        Button notificationAccess = new Button(this);
+        notificationAccess.setText("Enable playback timestamp access");
+        notificationAccess.setOnClickListener(view -> startActivity(
+                new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)));
+        LinearLayout.LayoutParams accessParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        accessParams.setMargins(0, dp(12), 0, dp(24));
+        root.addView(notificationAccess, accessParams);
 
         Button start = new Button(this);
         start.setText("Start synthetic");
@@ -85,6 +159,16 @@ public final class MainActivity extends Activity {
         stopParams.setMargins(0, dp(12), 0, 0);
         root.addView(stop, stopParams);
 
+        status = new TextView(this);
+        status.setText("Ready");
+        status.setTextSize(13f);
+        status.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams statusParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        statusParams.setMargins(0, dp(20), 0, 0);
+        root.addView(status, statusParams);
+
         TextView androidId = new TextView(this);
         androidId.setText("Device: " + Settings.Secure.getString(getContentResolver(), Settings.Secure.ANDROID_ID));
         androidId.setTextSize(12f);
@@ -96,6 +180,39 @@ public final class MainActivity extends Activity {
         root.addView(androidId, idParams);
 
         return root;
+    }
+
+    private void handleIncomingIntent(Intent intent) {
+        String input = youtubeInputFromIntent(intent);
+        if (input == null || input.isBlank()) {
+            return;
+        }
+        youtubeInput.setText(input.trim());
+        if (intent.hasExtra(EXTRA_START_SECONDS)) {
+            secondsInput.setText(String.valueOf(intent.getIntExtra(EXTRA_START_SECONDS, 0)));
+        }
+        updateStatus("Loaded shared YouTube input");
+        if (ACTION_OPEN_ON_WATCH.equals(intent.getAction())) {
+            openYouTubeOnWatch();
+        }
+    }
+
+    private String youtubeInputFromIntent(Intent intent) {
+        if (intent == null) {
+            return null;
+        }
+        String explicitInput = intent.getStringExtra(EXTRA_YOUTUBE_INPUT);
+        if (explicitInput != null) {
+            return explicitInput;
+        }
+        if (Intent.ACTION_SEND.equals(intent.getAction())) {
+            CharSequence text = intent.getCharSequenceExtra(Intent.EXTRA_TEXT);
+            return text == null ? null : text.toString();
+        }
+        if (Intent.ACTION_VIEW.equals(intent.getAction()) && intent.getData() != null) {
+            return intent.getData().toString();
+        }
+        return null;
     }
 
     @Override
@@ -134,8 +251,90 @@ public final class MainActivity extends Activity {
         startActivityForResult(intent, VIDEO_PICK_REQUEST);
     }
 
+    private void fillPlaybackTime() {
+        int seconds = PlaybackPositionProbe.findYouTubeStartSeconds(this);
+        if (seconds < 0) {
+            updateStatus("No YouTube playback timestamp available. Enable access, then play YouTube.");
+            return;
+        }
+        secondsInput.setText(String.valueOf(seconds));
+        updateStatus("Loaded phone playback time: " + seconds + "s");
+    }
+
+    private void openYouTubeOnWatch() {
+        try {
+            String input = youtubeInput.getText().toString();
+            YouTubeHandoff parsed = YouTubeHandoff.fromInput(input);
+            int startSeconds = resolveStartSeconds(parsed.startSeconds());
+            YouTubeHandoff handoff = YouTubeHandoff.fromInput(parsed.videoId(), startSeconds);
+            sendUrlToWatch(handoff.toMobileWatchUrl());
+        } catch (IllegalArgumentException e) {
+            updateStatus(e.getMessage());
+        }
+    }
+
+    private int resolveStartSeconds(int parsedSeconds) {
+        String manual = secondsInput.getText().toString().trim();
+        if (!manual.isEmpty()) {
+            try {
+                return Integer.parseInt(manual);
+            } catch (NumberFormatException e) {
+                throw new IllegalArgumentException("Timestamp must be whole seconds");
+            }
+        }
+
+        int playbackSeconds = PlaybackPositionProbe.findYouTubeStartSeconds(this);
+        if (playbackSeconds >= 0) {
+            return playbackSeconds;
+        }
+        return parsedSeconds;
+    }
+
+    private void sendUrlToWatch(String url) {
+        Log.i(TAG, "Finding watch for " + url);
+        updateStatus("Finding watch...");
+        Wearable.getNodeClient(this).getConnectedNodes()
+                .addOnSuccessListener(nodes -> sendUrlToNodes(url, nodes))
+                .addOnFailureListener(error -> {
+                    Log.w(TAG, "Watch lookup failed", error);
+                    updateStatus("Watch lookup failed: " + messageOf(error));
+                });
+    }
+
+    private void sendUrlToNodes(String url, List<Node> nodes) {
+        if (nodes.isEmpty()) {
+            Log.w(TAG, "No connected Wear OS watch found");
+            updateStatus("No connected Wear OS watch found");
+            return;
+        }
+
+        byte[] payload = WatchOpenMessage.encodePayload(url);
+        for (Node node : nodes) {
+            Log.i(TAG, "Sending handoff to " + node.getDisplayName() + " (" + node.getId() + ")");
+            Wearable.getMessageClient(this)
+                    .sendMessage(node.getId(), WatchOpenMessage.PATH_OPEN_YOUTUBE, payload)
+                    .addOnSuccessListener(id -> {
+                        Log.i(TAG, "Handoff sent to " + node.getDisplayName() + ": " + id);
+                        updateStatus("Sent to " + node.getDisplayName() + ": " + url);
+                    })
+                    .addOnFailureListener(error -> {
+                        Log.w(TAG, "Send failed", error);
+                        updateStatus("Send failed: " + messageOf(error));
+                    });
+        }
+    }
+
+    private String messageOf(Exception error) {
+        String message = error.getMessage();
+        return message == null ? error.getClass().getSimpleName() : message;
+    }
+
     private void stopStreaming() {
         startService(new Intent(this, StreamingService.class).setAction(StreamingService.ACTION_STOP));
+    }
+
+    private void updateStatus(String message) {
+        status.setText(message);
     }
 
     private void requestNotificationPermission() {
