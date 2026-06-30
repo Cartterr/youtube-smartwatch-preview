@@ -2,14 +2,16 @@
 
 Phone-assisted preview pipeline for Wear OS smartwatches.
 
-V0/V1 proves the battery-critical transport path. V2 adds the lean YouTube handoff:
+V0/V1 proves the battery-critical transport path. V2/V3 add YouTube handoff experiments:
 
 - the phone app runs a foreground TCP streaming service on port `45990`
 - the phone hardware-encodes a synthetic `360x360`, `12fps` H.264 stream
 - V1 can render a bundled MP4 or a picked local video into that same encoder surface
 - the watch app reconnects over Wi-Fi, hardware-decodes the stream, and renders fullscreen
 - V2 sends a `m.youtube.com` URL plus start timestamp from phone to watch over the Wear OS Data Layer
-- YouTube auth, Premium, playback, and video decode stay inside Samsung Internet/YouTube on the watch
+- V3 publishes detected YouTube media-session state automatically and gives the watch a native `Open current video` button
+- V3 uses an in-app muted/cropped YouTube IFrame player on the watch instead of opening a raw Samsung Internet tab
+- YouTube auth, Premium, playback, and video decode stay inside YouTube's web/player surface on the watch
 
 ## Tooling
 
@@ -82,6 +84,23 @@ YSWPhone: Handoff sent to <watch node>
 ```
 
 The `Use phone playback time` button reads active YouTube media-session position when Android notification-listener access has been enabled for `YSW Preview sync`.
+
+## Run V3 automatic watch player
+
+1. Install both debug APKs.
+2. On the phone, open Android notification access settings and enable `YSW Preview sync`.
+3. Play a YouTube video in the official phone YouTube app.
+4. Open `YSW Preview Watch` on the watch.
+5. If the phone exposes an exact video id, the watch shows `Open current video`.
+6. Tap it to open the watch's in-app muted/cropped YouTube player at the current phone timestamp.
+
+If the watch says the exact video id is missing, the phone did detect YouTube playback but the official YouTube app did not expose an id through `MediaSession` metadata. In that case the next step is to inspect phone `dumpsys media_session` while YouTube is playing and decide whether to add a stronger extraction path.
+
+For watch-player debugging over ADB:
+
+```powershell
+adb -s <WATCH_SERIAL> shell am start -n cl.dily.youtubepreview/cl.dily.youtubepreview.wear.YouTubePlayerActivity --es cl.dily.youtubepreview.YOUTUBE_URL "https://youtu.be/dQw4w9WgXcQ?t=42"
+```
 
 ## Run V0/V1 stream
 

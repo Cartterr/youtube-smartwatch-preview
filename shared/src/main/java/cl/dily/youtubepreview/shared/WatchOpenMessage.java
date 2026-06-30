@@ -4,6 +4,7 @@ import java.nio.charset.StandardCharsets;
 
 public final class WatchOpenMessage {
     public static final String PATH_OPEN_YOUTUBE = "/yswp/open-youtube";
+    public static final String PATH_YOUTUBE_STATE = "/yswp/youtube-state";
 
     private WatchOpenMessage() {
     }

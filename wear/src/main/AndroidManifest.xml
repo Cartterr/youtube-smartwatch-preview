@@ -16,6 +16,11 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".YouTubePlayerActivity"
+            android:exported="true"
+            android:hardwareAccelerated="true" />
+
         <service
             android:name=".WatchCommandListenerService"
             android:exported="true">
@@ -25,6 +30,10 @@
                     android:scheme="wear"
                     android:host="*"
                     android:path="/yswp/open-youtube" />
+                <data
+                    android:scheme="wear"
+                    android:host="*"
+                    android:path="/yswp/youtube-state" />
             </intent-filter>
         </service>
     </application>

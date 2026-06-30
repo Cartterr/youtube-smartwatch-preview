@@ -7,6 +7,7 @@ import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.SystemClock;
 import android.provider.Settings;
 import android.text.InputType;
 import android.util.Log;
@@ -19,6 +20,7 @@ import android.widget.TextView;
 import cl.dily.youtubepreview.shared.StreamSource;
 import cl.dily.youtubepreview.shared.WatchOpenMessage;
 import cl.dily.youtubepreview.shared.YouTubeHandoff;
+import cl.dily.youtubepreview.shared.YouTubePlaybackSnapshot;
 import com.google.android.gms.wearable.Node;
 import com.google.android.gms.wearable.Wearable;
 
@@ -62,7 +64,7 @@ public final class MainActivity extends Activity {
         root.setPadding(padding, padding, padding, padding);
 
         TextView title = new TextView(this);
-        title.setText("YouTube Smartwatch Preview V2");
+        title.setText("YouTube Smartwatch Preview V3");
         title.setTextSize(22f);
         title.setGravity(Gravity.CENTER);
         root.addView(title, new LinearLayout.LayoutParams(
@@ -70,7 +72,7 @@ public final class MainActivity extends Activity {
                 ViewGroup.LayoutParams.WRAP_CONTENT));
 
         TextView body = new TextView(this);
-        body.setText("Share or paste a YouTube URL, send it to the watch, and keep the phone as the audio/timestamp source.");
+        body.setText("Automatically publishes current YouTube playback to the watch. Manual URL entry remains as a debug fallback.");
         body.setTextSize(15f);
         body.setGravity(Gravity.CENTER);
         LinearLayout.LayoutParams bodyParams = new LinearLayout.LayoutParams(
@@ -252,18 +254,29 @@ public final class MainActivity extends Activity {
     }
 
     private void fillPlaybackTime() {
-        int seconds = PlaybackPositionProbe.findYouTubeStartSeconds(this);
-        if (seconds < 0) {
+        YouTubePlaybackSnapshot snapshot = PlaybackPositionProbe.findYouTubeSnapshot(this);
+        if (snapshot.packageName().isBlank()) {
             updateStatus("No YouTube playback timestamp available. Enable access, then play YouTube.");
             return;
         }
+        int seconds = snapshot.currentSeconds(SystemClock.elapsedRealtime());
         secondsInput.setText(String.valueOf(seconds));
-        updateStatus("Loaded phone playback time: " + seconds + "s");
+        if (snapshot.hasVideoId()) {
+            youtubeInput.setText(snapshot.videoId());
+            updateStatus("Detected " + labelFor(snapshot) + " at " + seconds + "s");
+        } else {
+            updateStatus("Detected " + labelFor(snapshot) + " at " + seconds
+                    + "s, but YouTube did not expose an exact video id.");
+        }
     }
 
     private void openYouTubeOnWatch() {
         try {
             String input = youtubeInput.getText().toString();
+            if (input.isBlank()) {
+                openDetectedYouTubeOnWatch();
+                return;
+            }
             YouTubeHandoff parsed = YouTubeHandoff.fromInput(input);
             int startSeconds = resolveStartSeconds(parsed.startSeconds());
             YouTubeHandoff handoff = YouTubeHandoff.fromInput(parsed.videoId(), startSeconds);
@@ -271,6 +284,21 @@ public final class MainActivity extends Activity {
         } catch (IllegalArgumentException e) {
             updateStatus(e.getMessage());
         }
+    }
+
+    private void openDetectedYouTubeOnWatch() {
+        YouTubePlaybackSnapshot snapshot = PlaybackPositionProbe.findYouTubeSnapshot(this);
+        if (snapshot.packageName().isBlank()) {
+            updateStatus("No active YouTube playback detected.");
+            return;
+        }
+        String url = snapshot.toWatchUrl(SystemClock.elapsedRealtime());
+        if (url.isBlank()) {
+            updateStatus("Detected " + labelFor(snapshot)
+                    + ", but YouTube did not expose an exact video id.");
+            return;
+        }
+        sendUrlToWatch(url);
     }
 
     private int resolveStartSeconds(int parsedSeconds) {
@@ -327,6 +355,13 @@ public final class MainActivity extends Activity {
     private String messageOf(Exception error) {
         String message = error.getMessage();
         return message == null ? error.getClass().getSimpleName() : message;
+    }
+
+    private String labelFor(YouTubePlaybackSnapshot snapshot) {
+        if (!snapshot.title().isBlank()) {
+            return snapshot.title();
+        }
+        return snapshot.packageName();
     }
 
     private void stopStreaming() {
