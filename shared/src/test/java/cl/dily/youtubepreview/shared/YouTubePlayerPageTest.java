@@ -9,7 +9,7 @@ final class YouTubePlayerPageTest {
     void buildsMutedAutoplayingCroppedIframePage() {
         String html = YouTubePlayerPage.html("dQw4w9WgXcQ", 42);
 
-        assertTrue(html.contains("https://www.youtube.com/embed/dQw4w9WgXcQ"));
+        assertTrue(html.contains(YouTubePlayerPage.embedUrl("dQw4w9WgXcQ", 42)));
         assertTrue(html.contains("autoplay=1"));
         assertTrue(html.contains("mute=1"));
         assertTrue(html.contains("playsinline=1"));
@@ -17,5 +17,15 @@ final class YouTubePlayerPageTest {
         assertTrue(html.contains("start=42"));
         assertTrue(html.contains("width:177.78vh"));
         assertTrue(html.contains("transform:translate(-50%,-50%)"));
+    }
+
+    @Test
+    void buildsStandaloneEmbedUrlForBrowserFallback() {
+        String url = YouTubePlayerPage.embedUrl("dQw4w9WgXcQ", 42);
+
+        assertTrue(url.startsWith("https://www.youtube.com/embed/dQw4w9WgXcQ?"));
+        assertTrue(url.contains("autoplay=1"));
+        assertTrue(url.contains("mute=1"));
+        assertTrue(url.contains("start=42"));
     }
 }

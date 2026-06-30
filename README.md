@@ -96,6 +96,8 @@ The `Use phone playback time` button reads active YouTube media-session position
 
 If the watch says the exact video id is missing, the phone did detect YouTube playback but the official YouTube app did not expose an id through `MediaSession` metadata. In that case the next step is to inspect phone `dumpsys media_session` while YouTube is playing and decide whether to add a stronger extraction path.
 
+On Galaxy Watch6, the in-app Android `WebView` path may be unavailable because the watch does not expose a WebView provider. V3 falls back to Samsung Internet with a YouTube embed URL, but current device testing shows YouTube can return `Error 153` for direct embed playback in that browser. That means the native watch-player path is not solved yet on this hardware.
+
 For watch-player debugging over ADB:
 
 ```powershell

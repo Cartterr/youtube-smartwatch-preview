@@ -4,12 +4,16 @@ public final class YouTubePlayerPage {
     private YouTubePlayerPage() {
     }
 
-    public static String html(String videoId, int startSeconds) {
+    public static String embedUrl(String videoId, int startSeconds) {
         String safeId = YouTubeHandoff.fromInput(videoId).videoId();
         int safeStart = Math.max(0, startSeconds);
-        String src = "https://www.youtube.com/embed/" + safeId
+        return "https://www.youtube.com/embed/" + safeId
                 + "?autoplay=1&mute=1&playsinline=1&controls=0&disablekb=1"
                 + "&fs=0&rel=0&modestbranding=1&start=" + safeStart;
+    }
+
+    public static String html(String videoId, int startSeconds) {
+        String src = embedUrl(videoId, startSeconds);
         return "<!doctype html><html><head>"
                 + "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no\">"
                 + "<style>"
