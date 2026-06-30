@@ -29,6 +29,7 @@ final class PreviewClient {
     private final StatusListener listener;
     private final AtomicBoolean running = new AtomicBoolean(false);
     private Thread thread;
+    private volatile Socket activeSocket;
 
     PreviewClient(String host, Surface surface, StatusListener listener) {
         this.host = host;
@@ -46,6 +47,7 @@ final class PreviewClient {
 
     void stop() {
         running.set(false);
+        closeActiveSocket();
         if (thread != null) {
             thread.interrupt();
         }
@@ -68,37 +70,50 @@ final class PreviewClient {
 
     private void connectAndDecode() throws IOException {
         try (Socket socket = new Socket()) {
+            activeSocket = socket;
             listener.onStatus("Connecting " + host + ":" + PORT, false);
             socket.connect(new InetSocketAddress(host, PORT), 4_000);
             socket.setTcpNoDelay(true);
             InputStream input = socket.getInputStream();
             StreamHandshake handshake = StreamHandshake.parse(readAsciiLine(input));
+            if (!running.get()) {
+                return;
+            }
             listener.onStatus("Connected " + handshake.width() + "x" + handshake.height() + " @" + handshake.fps() + "fps", true);
             decode(input, handshake);
+        } finally {
+            activeSocket = null;
         }
     }
 
     private void decode(InputStream input, StreamHandshake handshake) throws IOException {
+        if (!running.get() || !surface.isValid()) {
+            throw new IOException("Surface is no longer valid");
+        }
         MediaCodec decoder = MediaCodec.createDecoderByType(handshake.codec());
+        boolean started = false;
         try {
             MediaFormat format = MediaFormat.createVideoFormat(handshake.codec(), handshake.width(), handshake.height());
             decoder.configure(format, surface, null, 0);
             decoder.start();
+            started = true;
             MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
             long frames = 0;
-            long started = System.currentTimeMillis();
+            long startedAtMs = System.currentTimeMillis();
             while (running.get()) {
                 AccessUnitFrame frame = AccessUnitFrame.readFrom(input, MAX_ACCESS_UNIT_BYTES);
                 queueInput(decoder, frame);
                 frames += drainOutput(decoder, info);
-                long elapsed = Math.max(1L, System.currentTimeMillis() - started);
+                long elapsed = Math.max(1L, System.currentTimeMillis() - startedAtMs);
                 if (frames > 0 && frames % 30 == 0) {
                     long fps = frames * 1000L / elapsed;
                     listener.onStatus("Rendering " + fps + "fps from " + host, true);
                 }
             }
         } finally {
-            decoder.stop();
+            if (started) {
+                decoder.stop();
+            }
             decoder.release();
         }
     }
@@ -158,6 +173,17 @@ final class PreviewClient {
             Thread.sleep(millis);
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
+        }
+    }
+
+    private void closeActiveSocket() {
+        Socket socket = activeSocket;
+        if (socket == null) {
+            return;
+        }
+        try {
+            socket.close();
+        } catch (IOException ignored) {
         }
     }
 }
